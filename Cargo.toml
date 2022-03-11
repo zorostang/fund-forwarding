@@ -41,6 +41,7 @@ cosmwasm-schema = { git = "https://github.com/enigmampc/SecretNetwork", tag = "v
 cosmwasm-std = { git = "https://github.com/enigmampc/SecretNetwork", tag = "v1.0.0" }
 cosmwasm-storage = { git = "https://github.com/enigmampc/SecretNetwork", tag = "v1.0.0" }
 secret-toolkit = { git = "https://github.com/enigmampc/secret-toolkit", rev = "52df67c2becf98510fa55bdad5edf0e2dd11f5a6" }
+primitive-types = { version = "0.9.0", default-features = false }
 
 [dev-dependencies]
 

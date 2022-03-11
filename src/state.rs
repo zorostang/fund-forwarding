@@ -12,11 +12,12 @@ use cosmwasm_std::{CanonicalAddr, ReadonlyStorage, StdError, StdResult, Storage}
 
 pub const CONFIG_KEY: &[u8] = b"config";
 pub const PREFIX_TOKEN_CONTRACT_INFO: &[u8] = b"tokeninfo";
+/// Fund distribution info
+pub const FUNDS_DISTRIBUTION_KEY: &[u8] = b"fundsdistribution";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Config {
     pub admin: CanonicalAddr,
-    pub dao: CanonicalAddr,
 }
 
 
@@ -69,4 +70,16 @@ pub fn may_load<T: DeserializeOwned, S: ReadonlyStorage>(
 pub fn save<T: Serialize, S: Storage>(storage: &mut S, key: &[u8], value: &T) -> StdResult<()> {
     storage.set(key, &Bincode2::serialize(value)?);
     Ok(())
+}
+
+
+
+/// Removes an item from storage
+///
+/// # Arguments
+///
+/// * `storage` - a mutable reference to the storage this item is in
+/// * `key` - a byte slice representing the key that accesses the stored item
+pub fn remove<S: Storage>(storage: &mut S, key: &[u8]) {
+    storage.remove(key);
 }
