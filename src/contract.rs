@@ -293,7 +293,7 @@ fn store_dist_info<S: Storage, A: Api>(
         }
         if U256::from(total_rates) != royalty_den {
             return Err(StdError::generic_err(
-                "The sum of royalty rates must not exceed 100%",
+                "The sum of royalty rates must be 100%",
             ));
         }
         let stored = royal_inf.to_stored(api)?;
