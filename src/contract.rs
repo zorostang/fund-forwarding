@@ -291,7 +291,7 @@ fn store_dist_info<S: Storage, A: Api>(
                 "The number of decimal places used in the royalty rates is larger than supported",
             ));
         }
-        if U256::from(total_rates) > royalty_den {
+        if U256::from(total_rates) != royalty_den {
             return Err(StdError::generic_err(
                 "The sum of royalty rates must not exceed 100%",
             ));
