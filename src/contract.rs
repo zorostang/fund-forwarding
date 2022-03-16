@@ -1,13 +1,15 @@
 use cosmwasm_std::{
     to_binary, Api, Binary, CosmosMsg, Env, Extern, HandleResponse, HandleResult, HumanAddr, InitResponse, Uint128, Querier,
-    StdError, StdResult, Storage, CanonicalAddr,
+    StdError, StdResult, Storage, CanonicalAddr, QueryResult,
 };
 use cosmwasm_storage::{PrefixedStorage, ReadonlyPrefixedStorage};
 
-use crate::msg::{DaoCheckResponse ,HandleMsg, InitMsg, QueryMsg};
-use crate::state::{save, load, may_load, Config, CONFIG_KEY, PREFIX_TOKEN_CONTRACT_INFO};
+use crate::msg::{HandleMsg, InitMsg, QueryAnswer, QueryMsg};
+use crate::state::{save, load, may_load, remove, Config, CONFIG_KEY, PREFIX_TOKEN_CONTRACT_INFO, FUNDS_DISTRIBUTION_KEY};
+use crate::royalties::{RoyaltyInfo, StoredRoyaltyInfo};
 
 
+use primitive_types::U256;
 use secret_toolkit::{snip20::handle::{register_receive_msg,transfer_msg}};
 
 pub const BLOCK_SIZE: usize = 256;
@@ -20,8 +22,15 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
 ) -> StdResult<InitResponse> {
     let config = Config {
         admin: deps.api.canonical_address(&msg.admin)?,
-        dao: deps.api.canonical_address(&msg.dao)?,
     };
+
+    store_dist_info(
+        &mut deps.storage,
+        &deps.api,
+        Some(msg.dist_info).as_ref(),
+        None,
+        FUNDS_DISTRIBUTION_KEY
+    )?;
 
 
 
@@ -56,7 +65,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
     match msg {
         HandleMsg::Receive { sender, from, amount, msg } => receive(deps, env, sender, from, amount, msg),
         HandleMsg::RegisterToken { snip20_addr, snip20_hash } => register_token(deps, env, snip20_addr, snip20_hash),
-        HandleMsg::ChangeDao { dao_addr } => change_dao(deps, env, dao_addr),
+        HandleMsg::ChangeDistribution { dist_info } => change_dao(deps, env, dist_info),
         HandleMsg::ChangeAdmin { admin_addr } => change_admin(deps, env, admin_addr),
     }
 }
@@ -76,16 +85,10 @@ pub fn receive<S: Storage, A: Api, Q: Querier>(
 ) -> HandleResult {
 
 
-    let config: Config = load(&deps.storage, CONFIG_KEY)?;
-
-    let recipient = deps.api.human_address(&config.dao)?;
-
-
-        
+   
     forward_funds(
         deps,
         env,
-        recipient,
         amount,      
         )
 
@@ -98,7 +101,6 @@ pub fn receive<S: Storage, A: Api, Q: Querier>(
 pub fn forward_funds<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
-    recipient: HumanAddr,
     amount: Uint128
 ) -> StdResult<HandleResponse> {
     
@@ -126,17 +128,24 @@ pub fn forward_funds<S: Storage, A: Api, Q: Querier>(
     
 
 
-
-    // Send funds to recipient
-    let cosmos_msg = transfer_msg(
-        recipient,
-        amount,
-        padding.clone(),
-        BLOCK_SIZE,
-        callback_code_hash.clone(),
-        snip20_address.clone(),
-    )?;
-    msg_list.push(cosmos_msg);
+    //Payment distribution
+    let royalty_list = load::<StoredRoyaltyInfo, _>(&deps.storage, FUNDS_DISTRIBUTION_KEY)?;
+ 
+    for royalty in royalty_list.royalties.iter() {
+        let decimal_places : u32 = royalty_list.decimal_places_in_rates.into();
+        let rate :u128 = (royalty.rate as u128) * (10 as u128).pow(decimal_places);
+        let amount = Uint128((amount.u128() * rate) / (100 as u128).pow(decimal_places));
+        let recipient = deps.api.human_address(&royalty.recipient).unwrap();
+        let cosmos_msg = transfer_msg(
+            recipient,
+            amount,
+            padding.clone(),
+            BLOCK_SIZE,
+            callback_code_hash.clone(),
+            snip20_address.clone(),
+        )?;
+        msg_list.push(cosmos_msg);
+    }
 
 
 
@@ -202,9 +211,9 @@ pub fn register_token<S: Storage, A: Api, Q: Querier>(
 pub fn change_dao<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
-    dao_addr: HumanAddr,
+    dist_info: RoyaltyInfo,
 ) -> StdResult<HandleResponse> {
-    let mut config: Config = load(&deps.storage, CONFIG_KEY)?;  
+    let config: Config = load(&deps.storage, CONFIG_KEY)?;  
     let sender_raw = deps.api.canonical_address(&env.message.sender)?;
 
     if config.admin != sender_raw {
@@ -213,9 +222,14 @@ pub fn change_dao<S: Storage, A: Api, Q: Querier>(
         ));
     }
 
-    config.dao = deps.api.canonical_address(&dao_addr)?;
-
-    save(&mut deps.storage, CONFIG_KEY, &config)?;
+    store_dist_info(
+        &mut deps.storage,
+        &deps.api,
+        Some(dist_info).as_ref(),
+        None,
+        FUNDS_DISTRIBUTION_KEY
+    )?;
+    
 
 
     Ok(HandleResponse::default())
@@ -246,20 +260,83 @@ pub fn change_admin<S: Storage, A: Api, Q: Querier>(
 
 
 
-pub fn query<S: Storage, A: Api, Q: Querier>(
-    deps: &Extern<S, A, Q>,
-    msg: QueryMsg,
-) -> StdResult<Binary> {
-    match msg {
-        QueryMsg::GetDao {} => to_binary(&query_dao(deps)?),
+/// Returns StdResult<()>
+///
+/// verifies the royalty information is valid and if so, stores the royalty info for the token
+/// or as default
+///
+/// # Arguments
+///
+/// * `storage` - a mutable reference to the storage for this RoyaltyInfo
+/// * `api` - a reference to the Api used to convert human and canonical addresses
+/// * `royalty_info` - an optional reference to the RoyaltyInfo to store
+/// * `default` - an optional reference to the default StoredRoyaltyInfo to use if royalty_info is
+///               not provided
+/// * `key` - the storage key (either token key or default key)
+fn store_dist_info<S: Storage, A: Api>(
+    storage: &mut S,
+    api: &A,
+    royalty_info: Option<&RoyaltyInfo>,
+    default: Option<&StoredRoyaltyInfo>,
+    key: &[u8],
+) -> StdResult<()> {
+    // if RoyaltyInfo is provided, check and save it
+    if let Some(royal_inf) = royalty_info {
+        // the allowed message length won't let enough u16 rates to overflow u128
+        let total_rates: u128 = royal_inf.royalties.iter().map(|r| r.rate as u128).sum();
+        let (royalty_den, overflow) =
+            U256::from(10).overflowing_pow(U256::from(royal_inf.decimal_places_in_rates));
+        if overflow {
+            return Err(StdError::generic_err(
+                "The number of decimal places used in the royalty rates is larger than supported",
+            ));
+        }
+        if U256::from(total_rates) != royalty_den {
+            return Err(StdError::generic_err(
+                "The sum of royalty rates must be 100%",
+            ));
+        }
+        let stored = royal_inf.to_stored(api)?;
+        save(storage, key, &stored)
+    } else if let Some(def) = default {
+        save(storage, key, def)
+    } else {
+        remove(storage, key);
+        Ok(())
     }
 }
 
 
 
-fn query_dao<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) -> StdResult<DaoCheckResponse> {
-    let config: Config = load(&deps.storage, CONFIG_KEY)?;
 
-    Ok(DaoCheckResponse { dao: deps.api.human_address(&config.dao)? })
+
+
+
+
+
+
+
+pub fn query<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+    msg: QueryMsg,
+) -> StdResult<Binary> {
+    match msg {
+        QueryMsg::QueryDist {} => to_binary(&query_distribution(deps)?),
+    }
+}
+
+
+
+fn query_distribution<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) -> QueryResult {
+
+    let royalty = may_load::<StoredRoyaltyInfo, _>(&deps.storage, FUNDS_DISTRIBUTION_KEY)?;
+
+
+    to_binary(&QueryAnswer::RoyaltyInfo {
+        royalty_info: royalty
+            .map(|s| s.to_human(&deps.api, false))
+            .transpose()?,
+    })
+
 }
 

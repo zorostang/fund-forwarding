@@ -3,7 +3,7 @@ use std::fs::create_dir_all;
 
 use cosmwasm_schema::{export_schema, remove_schemas, schema_for};
 
-use fund_forwarding::msg::{HandleMsg, InitMsg, QueryMsg, DaoCheckResponse};
+use fund_forwarding::msg::{HandleMsg, InitMsg, QueryMsg};
 use fund_forwarding::state::Config;
 
 fn main() {
@@ -16,5 +16,4 @@ fn main() {
     export_schema(&schema_for!(HandleMsg), &out_dir);
     export_schema(&schema_for!(QueryMsg), &out_dir);
     export_schema(&schema_for!(Config), &out_dir);
-    export_schema(&schema_for!(DaoCheckResponse), &out_dir);
 }
