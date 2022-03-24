@@ -65,7 +65,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
     match msg {
         HandleMsg::Receive { sender, from, amount, msg } => receive(deps, env, sender, from, amount, msg),
         HandleMsg::RegisterToken { snip20_addr, snip20_hash } => register_token(deps, env, snip20_addr, snip20_hash),
-        HandleMsg::ChangeDistribution { dist_info } => change_dao(deps, env, dist_info),
+        HandleMsg::ChangeDistribution { dist_info } => change_dist(deps, env, dist_info),
         HandleMsg::ChangeAdmin { admin_addr } => change_admin(deps, env, admin_addr),
     }
 }
@@ -208,7 +208,7 @@ pub fn register_token<S: Storage, A: Api, Q: Querier>(
 
 
 
-pub fn change_dao<S: Storage, A: Api, Q: Querier>(
+pub fn change_dist<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
     dist_info: RoyaltyInfo,
