@@ -33,7 +33,6 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
     )?;
 
 
-
    
     save(&mut deps.storage, CONFIG_KEY, &config)?;
 
